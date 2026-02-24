@@ -1,0 +1,106 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "telegram-sender"
+description = "Add your description here"
+readme = "README.rst"
+requires-python = ">=3.14"
+license = "MIT"
+authors = [
+    { name = "GrehBan", email = "maximfeedback19@gmail.com" },
+]
+maintainers = [
+    { name = "GrehBan", email = "maximfeedback19@gmail.com" },
+]
+dependencies = [
+    "pydantic>=2.12.5",
+    "pyrofork>=2.3.69",
+    "qrcode>=8.2",
+    "tg-devices",
+    "tgcrypto>=1.2.5",
+    "typing-extensions>=4.15.0",
+    "uvloop>=0.21.0; (sys_platform == 'darwin' or sys_platform == 'linux') and platform_python_implementation != 'PyPy'",
+]
+dynamic = ["version"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["telegram_sender/"]
+[tool.hatch.version]
+path = "telegram_sender/__meta__.py"
+
+[dependency-groups]
+dev = [
+    "ruff~=0.14",
+    "mypy==1.10.1",
+    "pre-commit~=4.3",
+    "isort>=8.0.0",
+]
+
+[tool.ruff]
+line-length = 79
+src = ["telegram_sender", "tests"]
+target-version = "py314"
+exclude = [
+    ".git",
+    "build",
+    "dist",
+    "venv",
+    ".venv",
+    "docs",
+    "dev",
+    "scripts",
+    "*.egg-info",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "C4",  # flake8-comprehensions
+    "Q",   # flake8-quotes
+    "RET", # flake8-return
+    "I",   # isort (встроен в ruff)
+    "UP",  # pyupgrade
+    "T10", # flake8-debugger
+]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["telegram_sender"]
+
+[tool.mypy]
+python_version = "3.14"
+plugins = "pydantic.mypy"
+show_error_codes = true
+show_error_context = true
+pretty = true
+ignore_missing_imports = false
+warn_unused_configs = true
+disallow_subclassing_any = true
+disallow_any_generics = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+warn_return_any = true
+follow_imports_for_stubs = true
+namespace_packages = true
+show_absolute_path = true
+
+[tool.isort]
+profile = "ruff"
+line_length = 79
+
+[tool.uv.sources]
+tg-devices = { git = "https://github.com/GrehBan/tg-devices.git" }
