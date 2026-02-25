@@ -18,7 +18,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "pyrofork>=2.3.69",
     "qrcode>=8.2",
-    "tg-devices",
+    "tg-devices==0.1.2",
     "tgcrypto>=1.2.5",
     "typing-extensions>=4.15.0",
     "uvloop>=0.21.0; (sys_platform == 'darwin' or sys_platform == 'linux') and platform_python_implementation != 'PyPy'",
