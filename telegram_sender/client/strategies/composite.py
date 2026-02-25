@@ -42,8 +42,6 @@ class BaseCompositeStrategy(Generic[StrategyT]):  # noqa: UP046
         Args:
             *strategies: Ordered sequence of strategies to execute.
         """
-        if not strategies:
-            raise ValueError("No strategies provided")
         self.strategies: list[StrategyT] = list(strategies)
 
 

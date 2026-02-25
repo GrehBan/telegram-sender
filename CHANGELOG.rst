@@ -20,7 +20,6 @@ Changed
 - Refactored ``MessageSender`` to delegate media dispatch logic to a new centralized ``resolve_media`` utility.
 - Renamed ``VoiceNote`` to ``VideoNote`` for consistency with Pyrogram and Telegram naming conventions.
 - Moved ``RateLimiterStrategy`` from Post-Send to Pre-Send phase to correctly enforce limits before transmission.
-- Added deterministic proxy support to ``MessageSender`` with a new centralized ``proxy`` module.
 
 Added
 ~~~~~

@@ -80,15 +80,8 @@ class SenderRunner(ISenderRunner):
             elif isinstance(strategy, BaseSendStrategy):
                 on_send.append(strategy)
 
-        self.pre_send: CompositePreSendStrategy | None = None
-        self.post_send: CompositePostSendStrategy | None = None
-        self.on_send: CompositeSendStrategy
-
-        if pre_send:
-            self.pre_send = CompositePreSendStrategy(*pre_send)
-        if post_send:
-            self.post_send = CompositePostSendStrategy(*post_send)
-
+        self.pre_send = CompositePreSendStrategy(*pre_send)
+        self.post_send = CompositePostSendStrategy(*post_send)
         on_send.append(PlainSendStrategy())
         self.on_send = CompositeSendStrategy(*on_send)
 
