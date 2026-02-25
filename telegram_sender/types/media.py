@@ -1,10 +1,22 @@
 from collections.abc import Sequence
-from typing import BinaryIO, TypeAlias, TypeVar
+from typing import Annotated, Any, BinaryIO, TypeAlias, TypeVar, cast
+
+from pydantic import BeforeValidator
 
 from telegram_sender.types.base import BaseType
+from telegram_sender.types.binary import BinaryReadable
 
-MediaType: TypeAlias = str | BinaryIO  # noqa: UP040
 
+def _validate_binary_io(v: Any) -> BinaryIO:
+    if not isinstance(v, BinaryReadable):
+        raise ValueError("Expected a binary file-like object")
+    if hasattr(v, "mode") and "b" not in v.mode:
+        raise ValueError("File must be opened in binary mode")
+    return cast(BinaryIO, v)
+
+
+BinaryIOType = Annotated[BinaryIO, BeforeValidator(_validate_binary_io)]
+MediaType: TypeAlias = str | BinaryIOType  # noqa: UP040
 MediaT = TypeVar("MediaT", bound="Media")
 
 
