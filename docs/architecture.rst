@@ -15,69 +15,67 @@ The library is built around three layers:
         v
    +-----------+       +----------------+       +------------------+
    |  Runner   | ----> |  Strategies    | ----> |     Sender       |
-   | (queue +  |       | (pipeline of   |       | (Pyrogram client |
-   |  loop)    |       |  behaviours)   |       |  + device prof.) |
+   | (queue +  |       | (Pre/On/Post   |       | (Pyrogram client |
+   |  loop)    |       |  pipeline)     |       |  + device prof.) |
    +-----------+       +----------------+       +------------------+
         |                                               |
         v                                               v
    MessageResponse  <----------------------------------+
 
 1. **MessageSender** --- owns the Pyrogram ``Client``, generates a random
-   device profile, dispatches requests to the correct Pyrogram method.
+   device profile, and dispatches requests to the correct Pyrogram method.
+   Delegates media resolution logic to ``resolve_media`` and proxy
+   selection to ``pick_random_proxy``.
 2. **SenderRunner** --- async queue-based orchestrator that pulls requests,
-   passes them through the strategy pipeline, and collects responses.
+   passes them through the strategy pipeline phases, and collects responses.
 3. **Strategies** --- composable behaviours (delay, retry, requeue, rate-limit,
-   timeout, jitter) executed as a sequential pipeline.
+   timeout, jitter) organized into three distinct execution phases.
 
+.. note::
+
+   The **Media Resolver** (``resolve_media``) centralises all media-specific
+   dispatch logic (method selection, caption promotion, field renames,
+   ``InputMedia`` construction) so that the core sender remains simple and
+   easy to maintain.
+
+   The **Proxy Manager** (``proxy.py``) provides typed configurations and
+   deterministic selection, ensuring that each session remains bound to the
+   same proxy if a list is provided.
 Data flow
 ---------
 
 1. User calls ``runner.request(MessageRequest(...))``
 2. The request + a ``Future`` are placed in the ``_requests`` queue.
 3. The background task (``run()``) pulls the pair from the queue.
-4. ``_handle_request()`` invokes the strategy pipeline (or the sender
-   directly if no strategies are configured).
-5. The first strategy in the chain calls ``sender.send_message(request)``
-   and returns a ``MessageResponse``.
-6. Each subsequent strategy receives the response and can add behaviour
-   (sleep, re-enqueue, rate-limit) without sending again.
-7. The final response is placed in the ``_responses`` queue and the
+4. ``_handle_request()`` invokes the three-phase strategy pipeline:
+    a. **Pre-Send** strategies are executed first (no response available).
+       Used for preparation, validation, or rate limiting.
+    b. **On-Send** strategy is executed. If multiple are provided, the first
+       produces a ``MessageResponse``. If none are provided, the runner
+       calls ``sender.send_message()`` directly.
+    c. **Post-Send** strategies receive the response and can add behaviour
+       (sleep, retry, re-enqueue).
+5. The final response is placed in the ``_responses`` queue and the
    ``Future`` is resolved.
-8. The user receives responses via ``runner.results()`` async generator.
+6. The user receives responses via ``runner.results()`` async generator.
 
 Strategy pipeline
 -----------------
 
-Strategies implement the ``ISendStrategy`` protocol:
+Strategies are categorized by the protocol they implement:
 
-.. code-block:: python
+Pre-Send (``IPreSendStrategy``)
+    Executed before sending. Returns ``None``.
 
-   class ISendStrategy(Protocol):
-       async def __call__(
-           self,
-           sender: IMessageSender,
-           runner: ISenderRunner,
-           request: MessageRequest,
-           response: MessageResponse | None = None,
-       ) -> MessageResponse: ...
+On-Send (``ISendStrategy``)
+    Responsible for producing a ``MessageResponse``.
+    **Key rule**: always check if ``response is not None`` before sending.
 
-``CompositeStrategy`` chains strategies sequentially, forwarding the response
-from each strategy to the next:
+Post-Send (``IPostSendStrategy``)
+    Executed after sending. Receives and returns a ``MessageResponse``.
 
-.. code-block:: python
-
-   for strategy in self.strategies:
-       response = await strategy(sender, runner, request, response)
-
-Key rule: **when** ``response is None`` **the strategy is the first in the
-chain and must call** ``sender.send_message()`` **itself**.  Otherwise it
-reuses the existing response.
-
-This design prevents:
-
-* **Duplicate sends** --- only the first strategy sends.
-* **Deadlocks** --- strategies call the sender directly instead of
-  re-entering the runner's queue and waiting for the future.
+Each phase uses a corresponding ``Composite*Strategy`` to chain its
+strategies.
 
 Protocol-based interfaces
 -------------------------
@@ -91,11 +89,8 @@ All core contracts are ``typing.Protocol`` classes:
    Async context manager + ``request()``, ``results()``, ``result()``,
    ``run()``.
 
-``ISendStrategy``
-   Callable ``(sender, runner, request, response?) -> MessageResponse``.
-
-This makes it straightforward to substitute implementations for testing or
-to add custom senders / runners.
+``IPreSendStrategy``, ``ISendStrategy``, ``IPostSendStrategy``
+   The three phase protocols defining the strategy pipeline.
 
 Device profile generation
 -------------------------
@@ -107,7 +102,7 @@ The ``session`` string is used as a deterministic seed via
 the same device profile.
 
 The target OS is configurable via the ``OS`` enum (``ANDROID``, ``WINDOWS``,
-``MACOS``, ``LINUX``).  Defaults to ``ANDROID``.
+``MACOS``, ``LINUX``). Defaults to ``ANDROID``.
 
 Immutable models
 ----------------
@@ -120,7 +115,7 @@ All request / response / media objects are **Pydantic v2 models** with
 * ``MessageResponse`` --- wraps either a Pyrogram ``Message`` or an
   ``RPCError``.
 * ``Media`` subtypes --- ``Photo``, ``Video``, ``Audio``, ``Document``,
-  ``Sticker``, ``Animation``, ``Voice``, ``VoiceNote``, ``MediaGroup``.
+  ``Sticker``, ``Animation``, ``Voice``, ``VideoNote``, ``MediaGroup``.
 
 Immutability guarantees that objects can be safely shared and re-enqueued
 without risk of mutation.
@@ -135,18 +130,17 @@ Errors are handled at two levels:
    ``MessageResponse(error=err)`` instead of raising.
 
 2. **Runner level** --- ``SenderRunner._handle_request()`` catches **all**
-   exceptions from the strategy pipeline.  The exception is set on the
+   exceptions from the strategy pipeline. The exception is set on the
    request's ``Future`` so the caller can observe it.
 
-``TimeoutStrategy`` is a special case --- it re-raises ``TimeoutError``,
-which propagates through the pipeline and is caught by the runner.  For this
-reason ``TimeoutStrategy`` must be placed **first** in the pipeline.
+``TimeoutStrategy`` (On-Send) raises ``TimeoutError``, which propagates
+through the pipeline and is caught by the runner.
 
 Concurrency model
 -----------------
 
 * ``SenderRunner`` runs a **single background task** that processes the
-  request queue sequentially.  Only one request is in-flight at a time.
+  request queue sequentially. Only one request is in-flight at a time.
 * All strategies are invoked within this single task, so shared mutable state
   (e.g. ``RateLimiterStrategy._timestamps``) is safe from concurrent access
   as long as strategy instances are not shared across multiple runners.

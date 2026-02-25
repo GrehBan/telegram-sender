@@ -1,37 +1,81 @@
 import logging
+from typing import Generic, TypeVar, cast
 
 from telegram_sender.client.runner.protocols import ISenderRunner
 from telegram_sender.client.sender.protocols import IMessageSender
 from telegram_sender.client.sender.request import MessageRequest
 from telegram_sender.client.sender.response import MessageResponse
-from telegram_sender.client.strategies.protocols import ISendStrategy
+from telegram_sender.client.strategies.protocols import (
+    BasePostSendStrategy,
+    BasePreSendStrategy,
+    BaseSendStrategy,
+)
 
 logger = logging.getLogger(__name__)
 
+StrategyT = TypeVar(
+    "StrategyT",
+    BasePreSendStrategy,
+    BasePostSendStrategy,
+    BaseSendStrategy
+)
 
-class CompositeStrategy(ISendStrategy):
-    """Runs multiple strategies as a sequential pipeline.
 
-    The response produced by each strategy is forwarded to the
-    next one, allowing strategies to build on or modify earlier
-    results.
-
-    Args:
-        *strategies: Ordered sequence of strategies to execute.
+class BaseCompositeStrategy(Generic[StrategyT]):  # noqa: UP046
+    """Base class for running multiple strategies as a sequential pipeline.
     """
 
-    def __init__(self, *strategies: ISendStrategy) -> None:
-        self.strategies = strategies
+    def add(self, strategy: StrategyT) -> None:
+        """Add a strategy to the pipeline.
 
-    async def __call__(
+        Args:
+            strategy: The strategy to add.
+        """
+        self.strategies.append(strategy)
+
+    def __init__(
+        self,
+        *strategies: StrategyT
+    ) -> None:
+        """Initialize the composite strategy.
+
+        Args:
+            *strategies: Ordered sequence of strategies to execute.
+        """
+        if not strategies:
+            raise ValueError("No strategies provided")
+        self.strategies: list[StrategyT] = list(strategies)
+
+
+
+class CompositePreSendStrategy(
+    BaseCompositeStrategy[BasePreSendStrategy],
+    BasePreSendStrategy
+):
+    """Sequential pipeline for pre-send strategies.
+    """
+    async def execute(
         self,
         sender: IMessageSender,
         runner: ISenderRunner,
         request: MessageRequest,
         response: MessageResponse | None = None,
-    ) -> MessageResponse:
-        return await self.execute(sender, runner, request, response)
+    ) -> None:
+        for strategy in self.strategies:
+            await strategy.execute(
+                sender,
+                runner,
+                request,
+                response
+            )
 
+
+class CompositeSendStrategy(
+    BaseCompositeStrategy[BaseSendStrategy],
+    BaseSendStrategy
+):
+    """Sequential pipeline for on-send strategies.
+    """
     async def execute(
         self,
         sender: IMessageSender,
@@ -40,13 +84,33 @@ class CompositeStrategy(ISendStrategy):
         response: MessageResponse | None = None,
     ) -> MessageResponse:
         for strategy in self.strategies:
-            logger.debug(
-                "Executing strategy: '%s'",
-                strategy.__class__.__name__,
+            response = await strategy.execute(
+                sender,
+                runner,
+                request,
+                response
             )
-            response = await strategy(
-                sender, runner, request, response
-            )
+        return cast(MessageResponse, response)
 
-        assert response is not None
+
+class CompositePostSendStrategy(
+    BaseCompositeStrategy[BasePostSendStrategy],
+    BasePostSendStrategy
+):
+    """Sequential pipeline for post-send strategies.
+    """
+    async def execute(
+        self,
+        sender: IMessageSender,
+        runner: ISenderRunner,
+        request: MessageRequest,
+        response: MessageResponse,
+    ) -> MessageResponse:
+        for strategy in self.strategies:
+            response = await strategy.execute(
+                sender,
+                runner,
+                request,
+                response
+            )
         return response

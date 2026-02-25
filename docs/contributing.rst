@@ -73,8 +73,8 @@ Project layout
        |   +-- protocols.py     # ISenderRunner protocol
        |   +-- runner.py        # SenderRunner implementation
        +-- strategies/
-           +-- protocols.py     # ISendStrategy protocol
-           +-- composite.py     # CompositeStrategy
+           +-- protocols.py     # Pre/Send/Post strategy protocols
+           +-- composite.py     # Composite*Strategy subclasses
            +-- delay.py         # DelayStrategy
            +-- requeue.py       # RequeueStrategy
            +-- retry.py         # BaseRetryStrategy, RetryStrategy

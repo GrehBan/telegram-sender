@@ -1,56 +1,64 @@
 import logging
+from collections import defaultdict
 
 from telegram_sender.client.runner.protocols import ISenderRunner
 from telegram_sender.client.sender.protocols import IMessageSender
 from telegram_sender.client.sender.request import MessageRequest
 from telegram_sender.client.sender.response import MessageResponse
-from telegram_sender.client.strategies.protocols import ISendStrategy
+from telegram_sender.client.strategies.protocols import BasePostSendStrategy
 
 logger = logging.getLogger(__name__)
 
 
-class RequeueStrategy(ISendStrategy):
-    """Re-enqueues the request into the runner after each send.
+class RequeueStrategy(BasePostSendStrategy):
+    """Re-enqueues requests into the runner after each send.
 
-    Useful for sending the same message repeatedly. The request
-    is placed back into the runner's queue without awaiting the
-    result.
-
-    The counter is **global** across all requests handled by
-    this strategy instance. Once the limit is reached, no
-    further requests will be re-enqueued.
-
-    Args:
-        cycles: Total number of re-enqueues allowed across
-            all requests. ``-1`` means infinite.
+    The strategy can track cycles either globally (shared across
+    all requests) or per unique request object.
     """
 
-    def __init__(self, cycles: int = -1) -> None:
-        self.cycles = cycles
-        self._count: int = 0
+    def __init__(self, cycles: int = -1, per_request: bool = False) -> None:
+        """Initialize the requeue strategy.
 
-    async def __call__(
-        self,
-        sender: IMessageSender,
-        runner: ISenderRunner,
-        request: MessageRequest,
-        response: MessageResponse | None = None,
-    ) -> MessageResponse:
-        return await self.execute(sender, runner, request, response)
+        Args:
+            cycles: Total number of re-enqueues allowed.
+                ``-1`` means infinite.
+            per_request: If ``True``, the ``cycles`` limit is
+                applied to each unique request individually.
+                If ``False``, the limit is global.
+        """
+        self.cycles = cycles
+        self.per_request = per_request
+        self._global_count: int = 0
+        self._request_counts: dict[MessageRequest, int] = defaultdict(int)
 
     async def execute(
         self,
         sender: IMessageSender,
         runner: ISenderRunner,
         request: MessageRequest,
-        response: MessageResponse | None = None,
+        response: MessageResponse,
     ) -> MessageResponse:
-        if response is None:
-            response = await sender.send_message(request)
+        count = (
+            self._request_counts[request]
+            if self.per_request
+            else self._global_count
+        )
 
-        if self.cycles == -1 or self._count < self.cycles:
-            self._count += 1
-            logger.debug("Requeuing request, cycle: %d", self._count)
+        if self.cycles == -1 or count < self.cycles:
+            if self.per_request:
+                self._request_counts[request] += 1
+                label = f"Request (for {request.chat_id})"
+            else:
+                self._global_count += 1
+                label = "Global"
+
+            logger.debug(
+                "%s requeue: %d/%s",
+                label,
+                count + 1,
+                self.cycles if self.cycles != -1 else "inf",
+            )
             await runner.request(request)
 
         return response

@@ -119,17 +119,17 @@ Voice
    :param voice: File path, URL, or binary stream.
    :type voice: MediaType
 
-VoiceNote
+VideoNote
 ^^^^^^^^^
 
-.. class:: telegram_sender.types.media.VoiceNote
+.. class:: telegram_sender.types.media.VideoNote
 
    Video note (round video) attachment.
 
    Internally mapped to Pyrogram's ``send_video_note``.
 
-   :param voice_note: File path, URL, or binary stream.
-   :type voice_note: MediaType
+   :param video_note: File path, URL, or binary stream.
+   :type video_note: MediaType
 
 MediaGroup
 ^^^^^^^^^^

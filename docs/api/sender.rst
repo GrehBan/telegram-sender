@@ -6,7 +6,7 @@ Sender API
 MessageSender
 -------------
 
-.. class:: telegram_sender.client.sender.sender.MessageSender(session, os=OS.ANDROID, api_id=None, api_hash=None)
+.. class:: telegram_sender.client.sender.sender.MessageSender(session, os=OS.ANDROID, api_id=None, api_hash=None, proxies=None)
 
    Telegram message sender backed by a Pyrogram client.
 
@@ -20,10 +20,13 @@ MessageSender
            await s.send_message(request)
 
    :param session: Pyrogram session name.  Also used as the deterministic
-       seed for device profile generation.
+       seed for device profile generation and random proxy selection.
    :param os: Target OS for the generated device profile.
    :param api_id: Telegram API application ID.
    :param api_hash: Telegram API application hash.
+   :param proxies: Optional sequence of proxy configurations. If provided,
+       one is picked deterministically using the session name.
+   :type proxies: ProxySeq | None
 
    .. attribute:: session
       :type: str
@@ -45,6 +48,11 @@ MessageSender
 
       Telegram API application hash.
 
+   .. attribute:: proxies
+      :type: ProxySeq | None
+
+      Sequence of provided proxy configurations.
+
    .. property:: client
       :type: pyrogram.Client
 
@@ -63,7 +71,8 @@ MessageSender
       :async:
 
       Create (or re-create) the underlying Pyrogram client with a freshly
-      generated device profile.
+      generated device profile and a deterministically picked proxy (if
+      available).
 
       :param close: If ``True``, close the existing client before creating a
           new one.
@@ -75,13 +84,93 @@ MessageSender
       Send a message described by *request*.
 
       Dispatches to the appropriate Pyrogram method based on the media type
-      attached to the request.  Telegram ``RPCError`` is caught and wrapped
-      into the returned ``MessageResponse`` instead of propagating.
+      attached to the request. All exceptions encountered during the send
+      process (including Telegram ``RPCError``) are caught and wrapped into
+      the returned ``MessageResponse`` instead of propagating.
 
       :param request: The message request to send.
       :type request: MessageRequest
       :returns: A ``MessageResponse`` containing either the sent message(s)
           or the captured error.
+
+Media Resolution
+----------------
+
+.. function:: telegram_sender.client.sender.resolver.resolve_media(media, text=None)
+
+   Resolve a ``Media`` object into a Pyrogram method name and keyword
+   arguments.
+
+   Handles caption promotion, field renames, and media-group construction
+   directly from the typed ``Media`` objects to ensure no fields are lost
+   during serialization.
+
+   :param media: The media attachment to resolve.
+   :type media: Media
+   :param text: Optional message text.  Promoted to ``caption`` for
+       supported media types (Photo, Video, Audio, Document, Animation,
+       Voice); silently dropped for others (Sticker, VideoNote).
+   :type text: str | None
+   :returns: A tuple of ``(method_name, kwargs)``.
+   :rtype: tuple[str, dict[str, Any]]
+
+Proxy Management
+----------------
+
+.. class:: telegram_sender.client.sender.proxy.MTProtoProxy
+
+   MTProto proxy configuration ``TypedDict``.
+
+   .. attribute:: scheme
+      :value: "mtproto"
+   .. attribute:: server
+      :type: str
+   .. attribute:: port
+      :type: int
+   .. attribute:: secret
+      :type: str
+
+.. class:: telegram_sender.client.sender.proxy.SocksProxy
+
+   SOCKS5 proxy configuration ``TypedDict``.
+
+   .. attribute:: scheme
+      :value: "socks5"
+   .. attribute:: host
+      :type: str
+   .. attribute:: port
+      :type: int
+   .. attribute:: username
+      :type: str
+      :optional:
+   .. attribute:: password
+      :type: str
+      :optional:
+
+.. class:: telegram_sender.client.sender.proxy.HTTPSProxy
+
+   HTTPS proxy configuration ``TypedDict``.
+
+   .. attribute:: scheme
+      :value: "https"
+   .. attribute:: host
+      :type: str
+   .. attribute:: port
+      :type: int
+   .. attribute:: username
+      :type: str
+      :optional:
+   .. attribute:: password
+      :type: str
+      :optional:
+
+.. function:: telegram_sender.client.sender.proxy.resolve_proxies(proxies)
+
+   Resolve a sequence of typed proxy dicts into Pyrogram's format.
+
+.. function:: telegram_sender.client.sender.proxy.pick_random_proxy(proxies, seed)
+
+   Pick and resolve a single proxy deterministically from a sequence.
 
 IMessageSender
 --------------

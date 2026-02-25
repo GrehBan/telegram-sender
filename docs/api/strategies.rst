@@ -3,90 +3,84 @@ Strategies API
 
 .. module:: telegram_sender.client.strategies
 
-ISendStrategy
--------------
+Pre-Send Strategies
+-------------------
+
+.. class:: telegram_sender.client.strategies.protocols.IPreSendStrategy
+
+   ``typing.Protocol`` for a pre-send strategy in the processing pipeline.
+
+   Executed *before* the message is sent.
+
+   .. method:: __call__(sender, runner, request, response=None) -> None
+      :async:
+      :abstractmethod:
+
+.. class:: telegram_sender.client.strategies.protocols.BasePreSendStrategy
+
+   Base class for all pre-send strategies.
+
+RateLimiterStrategy
+^^^^^^^^^^^^^^^^^^^
+
+.. class:: telegram_sender.client.strategies.rate_limit.RateLimiterStrategy(rate=20, period=60.0)
+
+   Sliding-window rate limiter.
+
+   Ensures no more than ``rate`` requests are sent within any rolling window
+   of ``period`` seconds. When the limit is reached, the strategy sleeps
+   until the oldest timestamp expires from the window.
+
+   :param rate: Maximum number of requests per period.
+   :type rate: int
+   :param period: Sliding window length in seconds.
+   :type period: float
+
+On-Send Strategies
+------------------
 
 .. class:: telegram_sender.client.strategies.protocols.ISendStrategy
 
-   ``typing.Protocol`` for a send strategy in the processing pipeline.
+   ``typing.Protocol`` for an on-send strategy in the processing pipeline.
 
-   Strategies are called sequentially by ``CompositeStrategy``.  Each
-   receives the response produced by the previous one.  When ``response``
-   is ``None`` the strategy is the first in the chain and must send the
-   message itself.
+   Responsible for sending the message (if a response has not been produced
+   by a previous strategy) or retrying.
 
    .. method:: __call__(sender, runner, request, response=None) -> MessageResponse
       :async:
       :abstractmethod:
 
-      :param sender: The message sender for dispatching.
-      :type sender: IMessageSender
-      :param runner: The runner (used for re-queuing, etc.).
-      :type runner: ISenderRunner
-      :param request: The original message request.
-      :type request: MessageRequest
-      :param response: Response from a preceding strategy, or ``None`` if
-          this is the first strategy.
-      :type response: MessageResponse | None
-      :returns: The (possibly modified) message response.
+.. class:: telegram_sender.client.strategies.protocols.BaseSendStrategy
 
-CompositeStrategy
------------------
+   Base class for all on-send strategies.
 
-.. class:: telegram_sender.client.strategies.composite.CompositeStrategy(*strategies)
+PlainSendStrategy
+^^^^^^^^^^^^^^^^^
 
-   Runs multiple strategies as a sequential pipeline.
+.. class:: telegram_sender.client.strategies.send.PlainSendStrategy()
 
-   The response produced by each strategy is forwarded to the next one.
+   Basic strategy that simply dispatches the message via the sender.
 
-   :param \*strategies: Ordered sequence of strategies to execute.
-   :type \*strategies: ISendStrategy
+   This strategy is **always** included at the end of the on-send pipeline by
+   ``SenderRunner`` as a final fallback. It ensures the message is sent if
+   no other on-send strategy has produced a response.
 
-   .. method:: execute(sender, runner, request, response=None) -> MessageResponse
-      :async:
+TimeoutStrategy
+^^^^^^^^^^^^^^^
 
-      Execute all strategies in order, piping the response through.
+.. class:: telegram_sender.client.strategies.timeout.TimeoutStrategy(timeout=5.0)
 
-DelayStrategy
--------------
+   Wraps the send call with ``asyncio.wait_for``.
 
-.. class:: telegram_sender.client.strategies.delay.DelayStrategy(delay=1.0)
+   If a previous strategy already produced a response, it is returned
+   immediately. The timeout only applies to the actual network call.
 
-   Introduces a fixed delay after each send.
-
-   If the response contains an ``RPCError`` whose ``value`` is a number
-   (e.g. a Telegram flood-wait duration), that value is used as the delay
-   instead of the configured default.
-
-   :param delay: Default delay in seconds.
-   :type delay: float
-
-   .. method:: execute(sender, runner, request, response=None) -> MessageResponse
-      :async:
-
-RequeueStrategy
----------------
-
-.. class:: telegram_sender.client.strategies.requeue.RequeueStrategy(cycles=-1)
-
-   Re-enqueues the request into the runner's queue after each send.
-
-   The request is placed back into the queue via ``runner.request()``
-   **without** awaiting the returned future (fire-and-forget).
-
-   The counter is **global** across all requests handled by this strategy
-   instance.  Once the limit is reached, no further requests will be
-   re-enqueued.
-
-   :param cycles: Total number of re-enqueues allowed.  ``-1`` means
-       infinite.
-   :type cycles: int
-
-   .. method:: execute(sender, runner, request, response=None) -> MessageResponse
-      :async:
+   :param timeout: Maximum wait time in seconds.
+   :type timeout: float
+   :raises TimeoutError: If the send does not complete within the timeout.
 
 BaseRetryStrategy
------------------
+^^^^^^^^^^^^^^^^^
 
 .. class:: telegram_sender.client.strategies.retry.BaseRetryStrategy(attempts, delay)
 
@@ -113,8 +107,9 @@ BaseRetryStrategy
    .. method:: execute(sender, runner, request, response=None) -> MessageResponse
       :async:
 
-      If the initial response (or first send) has an error, retry up to
-      ``attempts`` times with the delay computed by ``_get_delay()``.
+      If the initial response (either produced by this strategy or passed in)
+      has an error, retry up to ``attempts`` times with the delay computed
+      by ``_get_delay()``.
 
 RetryStrategy
 ^^^^^^^^^^^^^
@@ -141,44 +136,83 @@ JitterStrategy
    :param jitter_ratio: Maximum jitter as a fraction of the backoff value.
    :type jitter_ratio: float
 
-RateLimiterStrategy
--------------------
+Post-Send Strategies
+--------------------
 
-.. class:: telegram_sender.client.strategies.rate_limit.RateLimiterStrategy(rate=20, period=60.0)
+.. class:: telegram_sender.client.strategies.protocols.IPostSendStrategy
 
-   Sliding-window rate limiter.
+   ``typing.Protocol`` for a post-send strategy in the processing pipeline.
 
-   Ensures no more than ``rate`` requests are sent within any rolling window
-   of ``period`` seconds.  When the limit is reached, the strategy sleeps
-   until the oldest timestamp expires from the window.
+   Executed *after* the message is sent. Receives and returns a
+   ``MessageResponse``.
 
-   :param rate: Maximum number of requests per period.
-   :type rate: int
-   :param period: Sliding window length in seconds.
-   :type period: float
-
-   .. method:: execute(sender, runner, request, response=None) -> MessageResponse
+   .. method:: __call__(sender, runner, request, response) -> MessageResponse
       :async:
+      :abstractmethod:
 
-TimeoutStrategy
----------------
+.. class:: telegram_sender.client.strategies.protocols.BasePostSendStrategy
 
-.. class:: telegram_sender.client.strategies.timeout.TimeoutStrategy(timeout=5.0)
+   Base class for all post-send strategies.
 
-   Wraps the send call with ``asyncio.wait_for``.
+DelayStrategy
+^^^^^^^^^^^^^
 
-   If a previous strategy already produced a response, it is returned
-   immediately.  The timeout only applies to the actual network call.
+.. class:: telegram_sender.client.strategies.delay.DelayStrategy(delay=1.0)
 
-   .. warning::
+   Introduces a fixed delay after each send.
 
-      Must be placed **first** in a ``CompositeStrategy`` chain because
-      ``TimeoutError`` propagates immediately, skipping any subsequent
-      strategies.
+   If the response contains an ``RPCError`` whose ``value`` is a number
+   (e.g. a Telegram flood-wait duration), that value is used as the delay
+   instead of the configured default.
 
-   :param timeout: Maximum wait time in seconds.
-   :type timeout: float
-   :raises TimeoutError: If the send does not complete within the timeout.
+   :param delay: Default delay in seconds.
+   :type delay: float
 
-   .. method:: execute(sender, runner, request, response=None) -> MessageResponse
-      :async:
+RequeueStrategy
+^^^^^^^^^^^^^^^
+
+.. class:: telegram_sender.client.strategies.requeue.RequeueStrategy(cycles=-1, per_request=False)
+
+   Re-enqueues requests into the runner's queue after each send.
+
+   Can track cycles either globally (shared) or per unique request object.
+
+   :param cycles: Total number of re-enqueues allowed. ``-1`` means
+       infinite.
+   :type cycles: int
+   :param per_request: If ``True``, track cycles for each request
+       individually.
+   :type per_request: bool
+
+Composite Strategies
+--------------------
+
+.. class:: telegram_sender.client.strategies.composite.CompositePreSendStrategy(*strategies)
+
+   Runs multiple pre-send strategies sequentially.
+
+.. class:: telegram_sender.client.strategies.composite.CompositeSendStrategy(*strategies)
+
+   Runs multiple on-send strategies sequentially.
+
+.. class:: telegram_sender.client.strategies.composite.CompositePostSendStrategy(*strategies)
+
+   Runs multiple post-send strategies sequentially.
+
+Utilities
+---------
+
+.. function:: telegram_sender.client.strategies.utils.resolve_timeout(error, default=0.0)
+
+   Safely extract a timeout value from an error.
+
+   If the error is an ``RPCError`` with a numeric ``value`` attribute
+   (e.g. flood-wait), that value is returned as a float. Otherwise,
+   the default is returned.
+
+   :param error: The exception to inspect.
+   :type error: Exception | None
+   :param default: Fallback value if no timeout is found.
+   :type default: float
+   :returns: Extracted timeout or default.
+   :rtype: float

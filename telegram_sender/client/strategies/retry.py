@@ -5,34 +5,28 @@ from telegram_sender.client.runner.protocols import ISenderRunner
 from telegram_sender.client.sender.protocols import IMessageSender
 from telegram_sender.client.sender.request import MessageRequest
 from telegram_sender.client.sender.response import MessageResponse
-from telegram_sender.client.strategies.protocols import ISendStrategy
+from telegram_sender.client.strategies.protocols import BaseSendStrategy
+from telegram_sender.client.strategies.utils import resolve_timeout
 
 logger = logging.getLogger(__name__)
 
 
-class BaseRetryStrategy(ISendStrategy):
+class BaseRetryStrategy(BaseSendStrategy):
     """Base class for retry strategies.
 
     Subclasses must implement ``_get_delay`` to control the
     wait time between retry attempts.
-
-    Args:
-        attempts: Maximum number of retry attempts.
-        delay: Base delay in seconds between retries.
     """
 
     def __init__(self, attempts: int, delay: float) -> None:
+        """Initialize the retry strategy.
+
+        Args:
+            attempts: Maximum number of retry attempts.
+            delay: Base delay in seconds between retries.
+        """
         self.attempts = attempts
         self.delay = delay
-
-    async def __call__(
-        self,
-        sender: IMessageSender,
-        runner: ISenderRunner,
-        request: MessageRequest,
-        response: MessageResponse | None = None,
-    ) -> MessageResponse:
-        return await self.execute(sender, runner, request, response)
 
     def _get_delay(
         self,
@@ -65,10 +59,13 @@ class BaseRetryStrategy(ISendStrategy):
             return response
 
         for attempt in range(self.attempts):
-            value = None
-            if isinstance(response.error.value, (int, float)):
-                value = response.error.value
-            delay = self._get_delay(attempt, value)
+            error_value: float | None = resolve_timeout(
+                response.error, default=-1.0
+            )
+            if error_value == -1.0:
+                error_value = None
+            
+            delay = self._get_delay(attempt, error_value)
 
             logger.debug(
                 "Attempt %d/%d failed, retrying in %.3fs",

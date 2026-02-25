@@ -12,12 +12,6 @@ class JitterStrategy(BaseRetryStrategy):
     On each attempt the delay is ``base * 2^attempt`` plus a
     uniformly random jitter up to ``jitter_ratio`` of the
     backoff value.
-
-    Args:
-        attempts: Maximum number of retry attempts.
-        delay: Base delay in seconds for backoff calculation.
-        jitter_ratio: Maximum jitter as a fraction of the
-            exponential backoff value.
     """
 
     def __init__(
@@ -26,6 +20,14 @@ class JitterStrategy(BaseRetryStrategy):
         delay: float,
         jitter_ratio: float = 0.5,
     ) -> None:
+        """Initialize the jitter strategy.
+
+        Args:
+            attempts: Maximum number of retry attempts.
+            delay: Base delay in seconds for backoff calculation.
+            jitter_ratio: Maximum jitter as a fraction of the
+                exponential backoff value.
+        """
         super().__init__(attempts, delay)
         self.jitter_ratio = jitter_ratio
 

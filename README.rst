@@ -96,26 +96,30 @@ Sending media
 Available strategies
 --------------------
 
+Strategies are categorized into three phases: **Pre-Send**, **On-Send**, and
+**Post-Send**. The ``SenderRunner`` automatically groups and executes them
+in order.
+
 .. list-table::
    :header-rows: 1
    :widths: 25 75
 
    * - Strategy
      - Description
-   * - ``DelayStrategy``
-     - Fixed pause after each send.  Respects flood-wait values.
-   * - ``RequeueStrategy``
-     - Fire-and-forget re-enqueue for repeated sending.
-   * - ``RetryStrategy``
-     - Retry on error with a fixed delay.
-   * - ``JitterStrategy``
-     - Retry with exponential backoff + random jitter.
    * - ``RateLimiterStrategy``
-     - Sliding-window rate limiter (N requests per M seconds).
+     - (Pre-Send) Sliding-window rate limiter (N requests per M seconds).
+   * - ``RetryStrategy``
+     - (On-Send) Retry on error with a fixed delay.
+   * - ``JitterStrategy``
+     - (On-Send) Retry with exponential backoff + random jitter.
    * - ``TimeoutStrategy``
-     - ``asyncio.wait_for`` wrapper.  Must be first in the pipeline.
+     - (On-Send) ``asyncio.wait_for`` wrapper for the send call.
+   * - ``DelayStrategy``
+     - (Post-Send) Fixed pause after each send. Respects flood-wait.
+   * - ``RequeueStrategy``
+     - (Post-Send) Global or per-request re-enqueue limit.
 
-Strategies are composed left-to-right:
+Within each phase, strategies are executed in the order they were provided.
 
 .. code-block:: python
 

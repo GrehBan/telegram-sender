@@ -11,24 +11,30 @@ SenderRunner
    Async queue-based runner that processes message requests.
 
    Wraps an ``IMessageSender`` and applies an optional chain of strategies
-   (via ``CompositeStrategy``) to every request.  Runs a background
-   ``asyncio`` task that sequentially pulls requests from a queue, executes
-   them, and pushes responses to a separate results queue.
+   organized into three phases (Pre-Send, On-Send, Post-Send) to every request.
+   Runs a background ``asyncio`` task that sequentially pulls requests from a
+   queue, executes them, and pushes responses to a separate results queue.
 
    Use as an async context manager::
 
-       async with SenderRunner(sender, strat1, strat2) as runner:
+       async with SenderRunner(sender, TimeoutStrategy(5), DelayStrategy(2)) as runner:
            await runner.request(req)
            async for resp in runner.results():
                ...
 
    :param sender: The sender used to dispatch messages.
    :type sender: IMessageSender
-   :param \*strategies: Strategies applied to each request in order.
-   :type \*strategies: ISendStrategy
-   :param loop: Event loop for creating futures.  Defaults to the running
-       loop.
+   :param \*strategies: Strategies applied to each request. Categorized by
+       their base type (Pre, On, or Post).
+   :type \*strategies: BasePreSendStrategy | BaseSendStrategy | BasePostSendStrategy
+   :param loop: Optional event loop for creating futures. If not provided,
+       the running loop is captured lazily.
    :type loop: asyncio.AbstractEventLoop | None
+
+   .. property:: loop
+      :type: asyncio.AbstractEventLoop
+
+      The event loop bound to the runner.
 
    .. property:: task
       :type: asyncio.Task[None]
@@ -66,15 +72,18 @@ SenderRunner
    .. method:: close() -> None
       :async:
 
-      Signal the runner to stop.  Sets the stop event, waits for the
+      Signal the runner to stop. Sets the stop event, waits for the
       background task to finish (draining any remaining requests), then
       returns.
 
-   .. method:: run() -> None
+   .. method:: run(drain=True) -> None
       :async:
 
-      The request processing loop.  Called automatically by
+      The request processing loop. Called automatically by
       ``__aenter__``; you do not need to call this directly.
+
+      :param drain: If ``True``, process remaining requests before exiting.
+      :type drain: bool
 
 ISenderRunner
 -------------
@@ -107,19 +116,28 @@ Request lifecycle
        |
        v
    _requests queue  --[background task]--> _handle_request()
-       |                                       |
-       |                  +--------------------+--------------------+
-       |                  |  strategy?         |  no strategy       |
-       |                  v                    v                    |
-       |          CompositeStrategy     sender.send_message()      |
-       |                  |                    |                    |
-       |                  +--------------------+                   |
-       |                           |                               |
-       |                           v                               |
-       |                   _responses queue                        |
-       |                           |                               |
-       v                           v                               |
-   Future resolved      results() yields response                  |
-                                                                   |
-   On exception:  Future.set_exception(err)                        |
-                  response NOT placed in _responses queue
+                                               |
+                                               v
+                                     +-------------------+
+                                     |  1. Pre-Send      |
+                                     +-------------------+
+                                               |
+                                               v
+                                     +-------------------+
+                                     |  2. On-Send       |
+                                     |  (incl. PlainSend)|
+                                     +-------------------+
+                                               |
+                                               v
+                                     +-------------------+
+                                     |  3. Post-Send     |
+                                     +-------------------+
+                                               |
+                                               v
+                                       _responses queue
+                                               |
+                                               v
+   Future resolved                 results() yields response
+
+   On exception: Future.set_exception(err)
+                 response NOT placed in _responses queue

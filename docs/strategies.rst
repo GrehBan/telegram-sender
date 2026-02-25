@@ -1,77 +1,23 @@
 Strategies Guide
 ================
 
-Strategies are composable behaviours applied to every message request.  They
-are executed as a **sequential pipeline** by ``CompositeStrategy``: the
-response from each strategy is forwarded to the next.
+Strategies are composable behaviours applied to every message request. They are
+organized into three distinct execution phases in the pipeline:
+
+1.  **Pre-Send**: Executed before the message is sent (no response available).
+2.  **On-Send**: Responsible for actually sending the message (returns a response).
+3.  **Post-Send**: Executed after the message is sent (receives and returns a response).
+
+The ``SenderRunner`` automatically categorizes strategies based on their type.
 
 Built-in strategies
 -------------------
 
-DelayStrategy
-^^^^^^^^^^^^^
-
-Introduces a fixed pause after each send.
-
-.. code-block:: python
-
-   from telegram_sender.client.strategies.delay import DelayStrategy
-
-   DelayStrategy(delay=5.0)   # 5-second delay
-
-If the response contains an ``RPCError`` whose ``value`` is numeric (e.g. a
-flood-wait duration), that value overrides the configured delay.
-
-RequeueStrategy
-^^^^^^^^^^^^^^^
-
-Re-enqueues the same request into the runner's queue after each send, causing
-it to be sent again.
-
-.. code-block:: python
-
-   from telegram_sender.client.strategies.requeue import RequeueStrategy
-
-   RequeueStrategy()           # infinite re-enqueues
-   RequeueStrategy(cycles=10)  # stop after 10 total re-enqueues
-
-.. important::
-
-   The ``cycles`` counter is **global** to the strategy instance, not
-   per-request.  Once the limit is reached, no further requests of any kind
-   will be re-enqueued.  For infinite looping use ``cycles=-1`` (the default).
-
-RetryStrategy
-^^^^^^^^^^^^^
-
-Retries the send on error with a fixed delay between attempts.
-
-.. code-block:: python
-
-   from telegram_sender.client.strategies.retry import RetryStrategy
-
-   RetryStrategy(attempts=3, delay=2.0)
-
-If the error carries a numeric ``value`` (e.g. flood-wait seconds), it is
-used instead of the fixed ``delay``.
-
-JitterStrategy
-^^^^^^^^^^^^^^
-
-Retries with exponential backoff plus random jitter:
-
-.. math::
-
-   \text{delay} = \text{base} \times 2^{\text{attempt}} + \text{uniform}(0,\; \text{backoff} \times \text{jitter\_ratio})
-
-.. code-block:: python
-
-   from telegram_sender.client.strategies.jitter import JitterStrategy
-
-   JitterStrategy(attempts=5, delay=1.0, jitter_ratio=0.5)
+Pre-Send Strategies
+^^^^^^^^^^^^^^^^^^^
 
 RateLimiterStrategy
-^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~
 
 Sliding-window rate limiter that ensures no more than ``rate`` requests are
 sent within any rolling ``period``.
@@ -85,11 +31,21 @@ sent within any rolling ``period``.
 When the limit is reached the strategy sleeps until the oldest timestamp
 expires from the window.
 
-TimeoutStrategy
-^^^^^^^^^^^^^^^
+On-Send Strategies
+^^^^^^^^^^^^^^^^^^
 
-Wraps the send call with ``asyncio.wait_for``.  Raises ``TimeoutError`` if
-the send does not complete in time.
+PlainSendStrategy
+~~~~~~~~~~~~~~~~~
+
+The basic strategy that simply dispatches the message via the sender. This
+strategy is **always** appended to the On-Send pipeline by the
+``SenderRunner`` as a final fallback. It only sends the message if no
+preceding strategy (like ``TimeoutStrategy``) has already produced a response.
+
+TimeoutStrategy
+~~~~~~~~~~~~~~~
+
+Wraps the message send call with ``asyncio.wait_for``.
 
 .. code-block:: python
 
@@ -97,101 +53,182 @@ the send does not complete in time.
 
    TimeoutStrategy(timeout=10.0)
 
-.. warning::
+RetryStrategy
+~~~~~~~~~~~~~
 
-   ``TimeoutStrategy`` **must be placed first** in the pipeline.  On timeout
-   it raises ``TimeoutError`` which skips all subsequent strategies.  The
-   runner catches the exception and sets it on the request's ``Future``.
+Retries the send on error with a fixed delay between attempts.
+
+.. code-block:: python
+
+   from telegram_sender.client.strategies.retry import RetryStrategy
+
+   RetryStrategy(attempts=3, delay=2.0)
+
+If the error carries a numeric ``value`` (e.g. flood-wait seconds), it is
+used instead of the fixed ``delay``.
+
+JitterStrategy
+~~~~~~~~~~~~~~
+
+Retries with exponential backoff plus random jitter:
+
+.. math::
+
+   \text{delay} = \text{base} \times 2^{\text{attempt}} + \text{uniform}(0,\; \text{backoff} \times \text{jitter\_ratio})
+
+.. code-block:: python
+
+   from telegram_sender.client.strategies.jitter import JitterStrategy
+
+   JitterStrategy(attempts=5, delay=1.0, jitter_ratio=0.5)
+
+.. note::
+
+   If multiple ``On-Send`` strategies are provided, the first one in the chain is
+   responsible for sending the message. Subsequent ones will receive the
+   response and can decide whether to send again (like ``RetryStrategy`` does
+   on error) or return it immediately.
+
+Post-Send Strategies
+^^^^^^^^^^^^^^^^^^^^
+
+DelayStrategy
+~~~~~~~~~~~~~
+
+Introduces a fixed pause after each send.
+
+.. code-block:: python
+
+   from telegram_sender.client.strategies.delay import DelayStrategy
+
+   DelayStrategy(delay=5.0)   # 5-second delay
+
+If the response contains an ``RPCError`` whose ``value`` is numeric (e.g. a
+flood-wait duration), that value overrides the configured delay.
+
+RequeueStrategy
+~~~~~~~~~~~~~~~
+
+Re-enqueues requests into the runner's queue after each send.
+
+.. code-block:: python
+
+   from telegram_sender.client.strategies.requeue import RequeueStrategy
+
+   # Global: stop after 10 total messages sent across all requests
+   RequeueStrategy(cycles=10, per_request=False)
+
+   # Per-Request: each unique message is sent up to 6 times
+   RequeueStrategy(cycles=5, per_request=True)
+
+.. note::
+
+   When ``per_request=True``, the strategy uses the ``MessageRequest`` object
+   itself as a key to track counts. Ensure you pass the same object instance to
+   ``runner.request()`` to trigger the per-request limit.
 
 Composing strategies
 --------------------
 
-Pass multiple strategies to ``SenderRunner`` --- they execute left-to-right:
+Pass multiple strategies to ``SenderRunner``. They are automatically grouped
+and executed in their respective phases:
 
 .. code-block:: python
 
    runner = SenderRunner(
        sender,
-       RequeueStrategy(),           # 1. send + re-enqueue
-       DelayStrategy(delay=10),     # 2. sleep 10 s
+       TimeoutStrategy(timeout=5),   # On-Send
+       RetryStrategy(attempts=3),     # On-Send (retries the timeout send)
+       DelayStrategy(delay=10),      # Post-Send
    )
 
-The first strategy in the chain receives ``response=None`` and is responsible
-for calling ``sender.send_message()``.  Each subsequent strategy receives the
-response from the previous one and adds its behaviour without sending again.
+Within each phase, strategies execute in the order they were provided.
 
-Pipeline examples
-^^^^^^^^^^^^^^^^^
+Adding strategies at runtime
+----------------------------
 
-**Send once with rate-limiting and delay:**
+Beyond the strategies passed to the constructor, you can register
+additional strategies at any point before the runner enters its
+processing loop.  Each phase exposes an ``.add()`` method:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 40 40
+
+   * - Phase
+     - When it runs
+     - Typical use
+   * - ``pre_send``
+     - Before the message is dispatched.
+     - Rate limiting, validation, logging.
+   * - ``on_send``
+     - During dispatch (wraps the send call).
+     - Timeout, retry, jitter.
+   * - ``post_send``
+     - After a response has been produced.
+     - Delay, requeue, metrics collection.
 
 .. code-block:: python
 
    runner = SenderRunner(
        sender,
-       RateLimiterStrategy(rate=30, period=60),
-       DelayStrategy(delay=2),
+       TimeoutStrategy(timeout=5),   # on_send — wraps the call
+       RetryStrategy(attempts=3),    # on_send — retries on error
+       DelayStrategy(delay=10),      # post_send — pause between sends
    )
 
-**Send with retry + jitter, then delay:**
+   # Register additional strategies after construction
+   runner.pre_send.add(RateLimiterStrategy(rate=30, period=60))
+   runner.on_send.add(JitterStrategy(attempts=2, delay=1.0))
+   runner.post_send.add(RequeueStrategy(cycles=5))
 
-.. code-block:: python
+Strategies within each phase execute in insertion order.  The full
+pipeline is:
 
-   runner = SenderRunner(
-       sender,
-       JitterStrategy(attempts=3, delay=1.0),
-       DelayStrategy(delay=5),
-   )
+.. code-block:: text
 
-**Timeout + infinite requeue + delay:**
+   pre_send[0] → pre_send[1] → … →
+   on_send[0]  → on_send[1]  → … →  sender.send_message()
+   post_send[0] → post_send[1] → … →
+   response returned to runner
 
-.. code-block:: python
+.. note::
 
-   runner = SenderRunner(
-       sender,
-       TimeoutStrategy(timeout=10),   # must be first
-       RequeueStrategy(),
-       DelayStrategy(delay=5),
-   )
+   Strategies added **after** ``async with runner:`` take effect
+   starting from the next queued request.  The currently
+   in-flight request is not affected.
 
 Writing a custom strategy
---------------------------
+-------------------------
 
-Implement the ``ISendStrategy`` protocol:
+Implement the protocol that matches your intended phase:
 
-.. code-block:: python
+Pre-Send Strategy
+^^^^^^^^^^^^^^^^^
 
-   from telegram_sender.client.runner.protocols import ISenderRunner
-   from telegram_sender.client.sender.protocols import IMessageSender
-   from telegram_sender.client.sender.request import MessageRequest
-   from telegram_sender.client.sender.response import MessageResponse
+Inherit from ``BasePreSendStrategy``. Use this to perform actions *before* the
+message is sent (e.g., logging, validation, or pre-send delays).
 
+On-Send Strategy
+^^^^^^^^^^^^^^^^
 
-   class LoggingStrategy:
-       """Logs every request/response pair."""
+Inherit from ``BaseSendStrategy``. Use this to control *how* the message is
+sent or to implement retry logic.
 
-       async def __call__(
-           self,
-           sender: IMessageSender,
-           runner: ISenderRunner,
-           request: MessageRequest,
-           response: MessageResponse | None = None,
-       ) -> MessageResponse:
-           if response is None:
-               response = await sender.send_message(request)
-           if response.error:
-               print(f"FAIL chat_id={request.chat_id}: {response.error}")
-           else:
-               print(f"OK   chat_id={request.chat_id}")
-           return response
+Post-Send Strategy
+^^^^^^^^^^^^^^^^^^
+
+Inherit from ``BasePostSendStrategy``. Use this to perform actions *after* the
+message is sent (e.g., re-queuing or post-send delays).
 
 Rules for custom strategies:
 
-1. Accept ``response: MessageResponse | None = None``.
-2. If ``response is None``, call ``sender.send_message(request)`` yourself.
-3. If ``response is not None``, **do not send again** --- just apply your
-   behaviour and return.
-4. Always return a ``MessageResponse``.
-5. Never ``await`` a future returned by ``runner.request()`` --- this causes
-   a deadlock.  Use ``runner.request()`` fire-and-forget only (like
-   ``RequeueStrategy`` does).
+1.  **Always** inherit from the appropriate base class (``BasePreSendStrategy``,
+    ``BaseSendStrategy``, or ``BasePostSendStrategy``).
+2.  In ``BaseSendStrategy``, **always** check if ``response is not None``
+    before sending to avoid double-sending if multiple on-send strategies are
+    used.
+3.  In ``BasePostSendStrategy``, **always** return a ``MessageResponse``.
+4.  Never ``await`` a future returned by ``runner.request()`` --- this causes
+    a deadlock. Use ``runner.request() fire-and-forget`` only (like
+    ``RequeueStrategy`` does).

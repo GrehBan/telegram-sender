@@ -1,10 +1,5 @@
-from enum import StrEnum
+from typing import TypeAlias
 
+from tg_devices.enums import os
 
-class OS(StrEnum):
-    """Supported operating systems for device profile generation."""
-
-    WINDOWS = "Windows"
-    MACOS = "macOS"
-    LINUX = "Linux"
-    ANDROID = "Android"
+OS: TypeAlias = os.OS  # noqa: UP040

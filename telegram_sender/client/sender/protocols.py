@@ -8,11 +8,8 @@ if TYPE_CHECKING:
 
 
 class IMessageSender(Protocol):
-    """Protocol for a Telegram message sender.
+    """Protocol for a Telegram message sender."""
 
-    Implementations must be usable as async context managers
-    and expose ``send_message`` for dispatching requests.
-    """
 
     async def __aenter__(self) -> Self:
         ...
@@ -29,17 +26,21 @@ class IMessageSender(Protocol):
         self,
         request: MessageRequest
     ) -> MessageResponse:
-        """Send a single message described by *request*.
+        """Send a message described by *request*.
+
+        Dispatches to the appropriate Telegram method based on
+        the media type. All exceptions encountered during the send
+        process (including Telegram ``RPCError``) are caught and wrapped into
+        the returned ``MessageResponse`` instead of propagating.
 
         Args:
             request: The message request to send.
 
         Returns:
-            A response containing either the sent message or
-            an error.
+            A response containing either the sent message(s)
+            or the captured error.
         """
         ...
 
     async def close(self) -> None:
-        """Release underlying resources."""
         ...

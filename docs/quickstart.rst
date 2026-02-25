@@ -53,8 +53,9 @@ Step-by-step breakdown
    profile randomization.
 
 2. **Create a runner** --- ``SenderRunner`` accepts the sender and any number
-   of strategies.  Strategies are composed into a pipeline via
-   ``CompositeStrategy`` and executed in order for every request.
+   of strategies. Strategies are automatically categorized into three phases:
+   **Pre-Send**, **On-Send**, and **Post-Send**, and executed in that order
+   for every request. Within each phase, strategies run sequentially.
 
 3. **Enter the context** --- ``async with runner:`` starts the Pyrogram client
    and spawns a background ``asyncio`` task that processes the request queue.
@@ -83,8 +84,8 @@ Attach a media object to the request via the ``media`` parameter:
    )
 
 All media types (``Photo``, ``Video``, ``Audio``, ``Document``, ``Sticker``,
-``Animation``, ``Voice``, ``VoiceNote``) accept a file path, URL, or binary
-stream.
+``Animation``, ``Voice``, ``VideoNote``) accept a file path, URL, or binary
+stream. ``VideoNote`` is specifically for round video messages.
 
 Sending an album
 ^^^^^^^^^^^^^^^^

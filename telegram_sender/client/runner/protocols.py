@@ -9,14 +9,16 @@ if TYPE_CHECKING:
     from types import TracebackType
 
 class ISenderRunner(Protocol):
-    """Protocol for an async queue-based message runner.
+    """Protocol for an async queue-based message runner."""
 
-    Implementations accept requests, process them in a
-    background task, and yield responses asynchronously.
-    """
+    async def run(self, drain: bool = True) -> None:
+        """Run the request processing loop until stopped.
 
-    async def run(self) -> None:
-        """Start the processing loop."""
+        Args:
+            drain: If ``True``, process all remaining requests
+                in the queue after the stop signal is received.
+        """
+        ...
 
     async def __aenter__(self) -> Self:
         ...
@@ -39,15 +41,23 @@ class ISenderRunner(Protocol):
             request: The message request to enqueue.
 
         Returns:
-            A future that resolves to the response once
-            the request has been handled.
+            A future resolved when the request is handled.
         """
         ...
 
     def results(self) -> AsyncGenerator[MessageResponse, None]:  # noqa: UP043
-        """Yield responses as they become available."""
+        """Yield responses as they become available.
+
+        Terminates once the runner is stopped, the background
+        task is done, and the response queue is empty.
+        """
         ...
 
     async def result(self) -> MessageResponse:
-        """Wait for and return the next available response."""
+        """Wait for and return the next available response.
+
+        Raises:
+            TimeoutError: If no response is available within
+                1 second.
+        """
         ...

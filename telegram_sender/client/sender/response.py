@@ -1,7 +1,6 @@
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
-from pyrogram.errors import RPCError
 from pyrogram.types import Message
 
 
@@ -24,7 +23,7 @@ class MessageResponse(BaseModel):
     )
 
     original: Message | list[Message] | None = None
-    error: RPCError | None = None
+    error: Exception | None = None
 
     @model_validator(mode="after")
     def validate_request_signature(self) -> Self:

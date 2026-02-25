@@ -86,15 +86,15 @@ class Voice(Media):
     voice: MediaType
 
 
-class VoiceNote(Media):
+class VideoNote(Media):
     """Video note (round video) attachment.
 
     Attributes:
-        voice_note: File path, URL, or binary stream of the
+        video_note: File path, URL, or binary stream of the
             video note.
     """
 
-    voice_note: MediaType
+    video_note: MediaType
 
 
 class MediaGroup(Media):
